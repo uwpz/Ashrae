@@ -3,5 +3,5 @@
 venv/
 *.lnk
 code/__pycache__
-data/
-!DATAMODEL_ashrae.xlsx
+data/*
+!data/DATAMODEL_ashrae.xlsx
