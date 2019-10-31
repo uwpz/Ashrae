@@ -4,8 +4,11 @@
 # ######################################################################################################################
 
 # General libraries, parameters and functions
+from os import getcwd, chdir
+chdir("../Ashrae")
+from os import getcwd
+import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 from initialize import *
-# import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 
 # Specific libraries
 from scipy.stats.mstats import winsorize
@@ -25,7 +28,7 @@ with open("0_etl.pkl", "rb") as file:
 df, df_meta_sub = d_vars["df"], d_vars["df_meta_sub"]
 
 # Train/Test fold: usually split by time
-np.random.seed(123)
+np.random.seed(1)
 tmp = np.random.permutation(df["week"].unique())
 weeks_util = tmp[:5]
 weeks_test = tmp[5:15]
@@ -198,12 +201,16 @@ plot_distr(df, cate, "target_iszero", varimp=varimp_cate_iszero, target_type="CL
 ########################################################################################################################
 
 # --- Define final features ----------------------------------------------------------------------------------------
-features_lasso = dict(metr=toomany + "_ENCODED",
-                      cate=np.concatenate([setdiff(metr + "_BINNED", onebin), setdiff(cate, "MISS_" + miss)]))
-features_xgb = dict(metr=np.concatenate([metr, toomany + "_ENCODED"]),
-                        cate=cate)
-features_lgbm = dict(metr=metr,
-                     cate=cate + "_ENCODED")
+
+exclude = ["dayofweek", "week", "month"]
+exclude = exclude + [x + "_ENCODED" for x in exclude] + [x + "_BINNED" for x in exclude]
+features_lasso = dict(metr=setdiff(toomany + "_ENCODED", exclude),
+                      cate=setdiff(np.concatenate([setdiff(metr + "_BINNED", onebin), setdiff(cate, "MISS_" + miss)]),
+                                   exclude))
+features_xgb = dict(metr=setdiff(np.concatenate([metr, toomany + "_ENCODED"]),exclude),
+                    cate=setdiff(cate, exclude))
+features_lgbm = dict(metr=setdiff(metr, exclude),
+                     cate=setdiff(cate + "_ENCODED", exclude))
 
 # features = np.concatenate([metr, cate, toomany + "_ENCODED"])
 # features_binned = np.concatenate([setdiff(metr + "_BINNED", onebin),

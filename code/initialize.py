@@ -27,6 +27,7 @@ from sklearn.calibration import calibration_curve
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.impute import SimpleImputer
 
+
 # Util
 from collections import defaultdict
 from os import getcwd
@@ -48,8 +49,7 @@ plotloc = "./output/"
 sns.set(style="whitegrid")
 pd.set_option('display.width', 320)
 pd.set_option('display.max_columns', 20)
-#plt.ioff()#; plt.ion()  # Interactive plotting? ion is default
-#matplotlib.use("Agg") # Do not show figure
+#matplotlib.use("Agg") plt.ioff()#; plt.ion() # Do not show figure
 
 # Other
 twocol = ["red", "green"]
@@ -79,6 +79,11 @@ def char_bins(series, n_bins=10):
 def spearman_loss_func(y_true, y_pred):
     spear = pd.DataFrame({"y_true": y_true, "y_pred": y_pred}).corr(method="spearman").values[0, 1]
     return spear
+
+
+def rmse(y_true, y_pred):
+    rmse = np.sqrt(np.mean(np.power(y_true - y_pred, 2)))
+    return rmse
 
 
 # Overview of values 
@@ -225,7 +230,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                                           gridsize=(int(50 * tmp_scale), 50),
                                           cmap=tmp_cmap)
                         plt.colorbar(p, ax=ax_act)
-                        sns.regplot(feature_act, target, df, lowess=True, scatter=False, color="black", ax=ax_act)
+                        #sns.regplot(feature_act, target, df, lowess=True, scatter=False, color="black", ax=ax_act)
                         if varimp is not None:
                             ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
                         else:
@@ -493,7 +498,7 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None
                               gridsize=(int(50 * tmp_scale), 50),
                               cmap=tmp_cmap)
             plt.colorbar(p, ax=ax_act)
-            sns.regplot(x, y, lowess=True, scatter=False, color="black", ax=ax_act)
+            # sns.regplot(x, y, lowess=True, scatter=False, color="black", ax=ax_act)
             ax_act.set_title(title)
             ax_act.set_ylabel(ylabel)
             ax_act.set_xlabel(xlabel)
@@ -703,6 +708,7 @@ def calc_varimp_by_permutation(df, df_ref, fit,
     # Performance per variable after permutation
     i_perm = np.random.permutation(np.arange(len(df)))  # permutation vector
 
+    #pdb.set_trace()
     # TODO: add all variables used as parameter
     def run_in_parallel(df_perm, feature):
         df_perm[feature] = df_perm[feature].values[i_perm]
@@ -715,7 +721,7 @@ def calc_varimp_by_permutation(df, df_ref, fit,
             perf = spearman_loss_func(df_perm[target],
                                       fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)))
         return perf
-    perf = Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(df, feature)
+    perf = Parallel(n_jobs=n_jobs, max_nbytes='100M')(delayed(run_in_parallel)(df, feature)
                                    for feature in features)
 
     # Collect performances and calculate importance
@@ -769,8 +775,8 @@ def calc_partial_dependence(df, df_ref, fit,
                                        pd.DataFrame({"feature": feature, "value": str(value), "yhat_mean": yhat_mean},
                                                     index=[0])])
         return df_pd_feature
-    df_pd = pd.concat(Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(feature)
-                                              for feature in features))
+    df_pd = pd.concat(Parallel(n_jobs=n_jobs, max_nbytes='100M')(delayed(run_in_parallel)(feature)
+                                                                 for feature in features))
     return df_pd
 
 
@@ -985,6 +991,26 @@ class FeatureEngineeringTitanic(BaseEstimator, TransformerMixin):
             df["familysize"] = df["sibsp"].astype("int") + df["parch"].astype("int") + 1
         if self.derive_fare_pp:
             df["fare_pp"] = df.groupby("ticket")["fare"].transform("mean")
+        return df
+
+
+class FeatureEngineeringAshrae(BaseEstimator, TransformerMixin):
+    def __init__(self, derive_fe=True):
+        self.derive_fe = derive_fe
+
+    def fit(self, df, y=None):
+        return self
+
+    def transform(self, df):
+        if self.derive_fe:
+            df = df.set_index("timestamp")
+            df["hour"] = df.index.hour.astype("str").str.zfill(2)
+            df["dayofweek"] = df.index.dayofweek.astype("str")
+            df["weekend"] = np.where(df.dayofweek.isin(["5", "6"]), 1, 0).astype("str")
+            df["week"] = df.index.week
+            df["month"] = df.index.month.astype("str").str.zfill(2)
+            df = df.reset_index()
+            df['sq_floor'] = df['square_feet'] / df['floor_count'].astype("float")
         return df
 
 

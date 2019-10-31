@@ -4,8 +4,11 @@
 # ######################################################################################################################
 
 # General libraries, parameters and functions
+from os import getcwd, chdir
+chdir("../Ashrae")
+from os import getcwd
+import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 from initialize import *
-# import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 
 # Specific libraries
 #  from scipy.stats.mstats import winsorize  # too slow
@@ -23,7 +26,7 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 df_train = pd.read_csv(dataloc + "train.csv", parse_dates=["timestamp"], dtype={'meter': object})
 #df_test = pd.read_csv(dataloc + "test.csv", parse_dates=["timestamp"], dtype={'meter': object})
 
-# Sample TODO: remov
+# Sample
 np.random.seed(123)
 n_buildings = 100
 buildings = df_train["building_id"].sample(n_buildings).values
@@ -47,8 +50,8 @@ df_train["dayofweek"] = df_train.index.dayofweek.astype("str")
 df_train["weekend"] = np.where(df_train.dayofweek.isin(["5", "6"]), 1, 0).astype("str")
 df_train["week"] = df_train.index.week
 df_train["month"] = df_train.index.month.astype("str").str.zfill(2)
+df_train["dayofyear"] = df_train.index.dayofyear
 df_train = df_train.reset_index()
-
 
 # Define target
 df_train["target"] = np.log(df_train["meter_reading"] + 1)
@@ -103,8 +106,6 @@ df_building = pd.read_csv(dataloc + "building_metadata.csv", dtype={'floor_count
 df_building['sq_floor'] = df_building['square_feet'] / df_building['floor_count'].astype("float")
 
 
-
-
 ########################################################################################################################
 # Prepare final data
 ########################################################################################################################
@@ -112,6 +113,16 @@ df_building['sq_floor'] = df_building['square_feet'] / df_building['floor_count'
 # Merge all together
 df = (df_train.merge(df_building, how="left", on=["building_id"])
       .merge(df_weather, how="left", on=["site_id", "timestamp"]))
+
+# Some checks
+#fig, ax = plt.subplots(4,4)
+sns.heatmap(df.groupby(["dayofyear", "meter", "site_id", "building_id", "meter"])["target_iszero"].mean().unstack("dayofyear"))
+df.groupby("site_id")["building_id"].nunique().sort_values()
+for site_id in range(16):
+    fig, ax = plt.subplots(1, 1)
+    sns.heatmap(df.loc[df["site_id"] == site_id]
+                .groupby(["dayofyear", "site_id", "meter", "building_id"])["target_iszero"].mean().unstack("dayofyear"))
+# site_id=0: <=141, site_id=15: >= 42 <=88 -> remove
 
 
 # --- Read metadata (Project specific) -----------------------------------------------------------------------------
@@ -132,7 +143,8 @@ df_meta_sub = df_meta.loc[df_meta["status"].isin(["ready"])]
 # Serialize
 with open("0_etl.pkl", "wb") as file:
     pickle.dump({"df": df,
-                 "df_meta_sub": df_meta_sub},
+                 "df_meta_sub": df_meta_sub,
+                 "df_weather": df_weather,
+                 "df_building": df_building},
                 file)
-
 
