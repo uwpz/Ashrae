@@ -14,18 +14,18 @@ import xgboost as xgb
 
 
 # Specific parameters
-
+# site_id filter
 
 # ######################################################################################################################
 # Fit
 # ######################################################################################################################
 
 # --- Read data  ----------------------------------------------------------------------------------------
-# ABT
+
+# df_train
 df_train = pd.read_csv(dataloc + "train.csv", parse_dates=["timestamp"], dtype={'meter': object})
-df_train = df_train.set_index("timestamp")
-df_train["week"] = df_train.index.week
-df_train = df_train.reset_index()
+
+# Add weather and building
 with open("0_etl.pkl", "rb") as file:
     d_vars = pickle.load(file)
 df_weather = d_vars["df_weather"]
@@ -33,14 +33,14 @@ df_building = d_vars["df_building"]
 df = (df_train.merge(df_building, how="left", on=["building_id"])
       .merge(df_weather, how="left", on=["site_id", "timestamp"]))
 
-# Read metadata
-df_meta_sub = d_vars["df_meta_sub"]
-
 # Define Target
 df["target"] = np.log(df["meter_reading"] + 1)
-df["target_iszero"] = np.where(df["meter_reading"] == 0, 1, 0)
+# df["target_iszero"] = np.where(df["meter_reading"] == 0, 1, 0)
 
 # Define data to be used for target encoding
+df = df.set_index("timestamp")
+df["week"] = df.index.week
+df = df.reset_index()
 np.random.seed(1)
 tmp = np.random.permutation(df["week"].unique())
 weeks_util = tmp[:5]
@@ -49,18 +49,13 @@ weeks_train = tmp[15:]
 df["fold"] = np.where(np.isin(df["week"].values, weeks_util), "util",
                       np.where(np.isin(df["week"], weeks_test), "test", "train"))
 print(df.fold.value_counts())
-df["fold_num"] = df["fold"].map({"train": 0, "util": 0, "test": 1})  # Used for pedicting test data
 df["encode_flag"] = df["fold"].map({"train": 0, "test": 0, "util": 1})  # Used for encoding
 
 
+# --- Get Metadata  ----------------------------------------------------------------------------------------
 
-
-# Filter
-#df = df.query("target_iszero==0")
-
-df = df.sample(n=int(1e7))
-# df_save = df.copy()
-# df = df_save.copy()
+# Read metadata
+df_meta_sub = d_vars["df_meta_sub"]
 
 # Get variable types
 metr = df_meta_sub.loc[(df_meta_sub["type"] == "metr") & (df_meta_sub["exclude"] != 1), "variable"].values
@@ -68,6 +63,11 @@ cate = df_meta_sub.loc[(df_meta_sub["type"] == "cate") & (df_meta_sub["exclude"]
 
 
 # --- ETL -------------------------------------------------------------------------------------------------
+
+# df = df.sample(n=int(1e7))
+# df_save = df.copy()
+# df = df_save.copy()
+
 pipeline_etl = Pipeline([
     ("feature_engineering", FeatureEngineeringAshrae(derive_fe=True)),  # feature engineering
     ("metr_convert", Convert(features=metr, convert_to="float")),  # convert metr to "float"
@@ -82,9 +82,14 @@ pipeline_etl = Pipeline([
 df = pipeline_etl.fit_transform(df, df["target"].values, cate_map_nonexist__transform=False)
 metr = np.append(metr, pipeline_etl.named_steps["cate_map_toomany"]._toomany + "_ENCODED")
 
+# Filter "main gaps"
+mask = ~(((df["site_id"] == 0) & (df["dayofyear"] <= 141)) |
+         ((df["site_id"] == 15) & (df["dayofyear"].between(42, 88))))
+df = df.loc[mask]
+
 '''
 from sklearn.model_selection import GridSearchCV, PredefinedSplit
-df_tune = df.sample(n=int(1e6))
+df_tune = df.query("site_id == "0")
 scoring = {"spear": make_scorer(spearman_loss_func, greater_is_better=True),
            "rmse": make_scorer(rmse, greater_is_better=False)}
 metric = "rmse"
@@ -114,6 +119,9 @@ sns.FacetGrid(df_fitres, col="param_min_child_weight", margin_titles=True) \
 
 
 # --- Fit -----------------------------------------------------------------------------------------------
+
+# TODO: by my_site_id: lump site_id: 11,7,10,12,6,1 to my_site_id = 99
+#df.groupby("site_id")["building_id"].nunique().sort_values()
 # Fit
 pipeline_fit = Pipeline([
     ("create_sparse_matrix", CreateSparseMatrix(metr=metr, cate=cate, df_ref=df)),

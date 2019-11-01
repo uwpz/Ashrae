@@ -30,7 +30,7 @@ with open(TARGET_TYPE + "_1_explore.pkl", "rb") as file:
     d_vars = pickle.load(file)
 df, features_lasso, features_xgb, features_lgbm = \
     d_vars["df"], d_vars["features_lasso"], d_vars["features_xgb"], d_vars["features_lgbm"]
-df = df.query("target_iszero==0")
+#df = df.query("target_iszero==0")
 metr = features_xgb["metr"]
 cate = features_xgb["cate"]
 features = np.append(metr, cate)

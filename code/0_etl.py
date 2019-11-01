@@ -27,10 +27,11 @@ df_train = pd.read_csv(dataloc + "train.csv", parse_dates=["timestamp"], dtype={
 #df_test = pd.read_csv(dataloc + "test.csv", parse_dates=["timestamp"], dtype={'meter': object})
 
 # Sample
-np.random.seed(123)
-n_buildings = 100
-buildings = df_train["building_id"].sample(n_buildings).values
-df_train = df_train[df_train["building_id"].isin(buildings)]
+df_train = df_train.query("site_id == 2")
+#np.random.seed(123)
+#n_buildings = 100
+#buildings = df_train["building_id"].sample(n_buildings).values
+#df_train = df_train[df_train["building_id"].isin(buildings)]
 
 # Timeseries processing
 '''
@@ -64,7 +65,15 @@ df_weather = pd.concat([pd.read_csv(dataloc + "weather_train.csv", parse_dates=[
                                     dtype={'cloud_coverage': object, 'precip_depth_1_hr': object}),
                         pd.read_csv(dataloc + "weather_test.csv", parse_dates=["timestamp"],
                                     dtype={'cloud_coverage': object, 'precip_depth_1_hr': object})])
-
+'''
+#TODO: convert timezone
+country = {0:1,1:2,2:1,3:1,4:1,5:2,6:1,7:3,8:1,9:1,10:1,11:3,12:4,13:1,14:1,15:1} 
+weather_train_df['country'] = weather_train_df['site_id'].map(country) 
+timediff = {0:4,1:0,2:7,3:4,4:7,5:0,6:4,7:4,8:4,9:5,10:7,11:4,12:0,13:5,14:4,15:4} 
+weather_train_df['time_diff']= weather_train_df['site_id'].map(timediff)
+target_train_df['hour'] = target_train_df['hour'] + target_train_df['time_diff'] 
+target_train_df.loc[target_train_df['hour']>23, 'hour'] = target_train_df[target_train_df['hour']>23]['hour'] - 24
+'''
 # Timeseries processing
 df_weather = (df_weather.set_index(['timestamp','site_id']).unstack('site_id')
               [['air_temperature', 'dew_temperature', 'sea_level_pressure', 'wind_direction', 'wind_speed']]

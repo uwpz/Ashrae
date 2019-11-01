@@ -30,4 +30,4 @@ print(datetime.now())
 yhat = scale_predictions(d_pipelines["pipeline_fit"].predict(df))
 print(datetime.now())
 
-df[["row_id"]].assign(meter_reading=np.exp(yhat) - 1).to_csv(dataloc + "score_second_try.csv", index=False)
+df[["row_id"]].assign(meter_reading=np.exp(yhat) - 1).to_csv(dataloc + "score_3rd_try.csv", index=False)
