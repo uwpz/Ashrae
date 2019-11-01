@@ -77,7 +77,7 @@ metr = setdiff(metr, remove)  # adapt metadata
 
 # Check for outliers and skewness
 df[metr].describe()
-plot_distr(df.sample(n=int(10e3)), metr, target_type=TARGET_TYPE, color=color, ylim=ylim,
+plot_distr(df), metr, target_type=TARGET_TYPE, color=color, ylim=ylim,
            ncol=3, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
 # Winsorize
@@ -99,7 +99,7 @@ varimp_metr_binned = calc_imp(df, metr + "_BINNED", target_type=TARGET_TYPE)
 print(varimp_metr_binned)
 
 # Plot
-plot_distr(df.sample(n=int(10e3)), features=np.hstack(zip(metr, metr + "_BINNED")),
+plot_distr(df, features=np.hstack(zip(metr, metr + "_BINNED")),
            varimp=pd.concat([varimp_metr, varimp_metr_binned]), target_type=TARGET_TYPE, color=color, ylim=ylim,
            ncol=3, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
 

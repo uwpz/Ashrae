@@ -514,7 +514,8 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None
             inset_ax = ax_act.inset_axes([0, 0, 0.2, 1])
             inset_ax.set_axis_off()
             ax_act.get_shared_y_axes().join(ax_act, inset_ax)
-            sns.distplot(y, color="grey", vertical=True, ax=inset_ax)
+            #pdb.set_trace()
+           # sns.distplot(y, color="grey", vertical=True, ax=inset_ax)
 
             # Inner-inner Boxplot on y
             xlim_inner = inset_ax.get_xlim()

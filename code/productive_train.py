@@ -83,21 +83,25 @@ df = pipeline_etl.fit_transform(df, df["target"].values, cate_map_nonexist__tran
 metr = np.append(metr, pipeline_etl.named_steps["cate_map_toomany"]._toomany + "_ENCODED")
 
 # Filter "main gaps"
+df = df.set_index("timestamp")
+df["dayofyear"] = df.index.dayofyear
+df = df.reset_index()
 mask = ~(((df["site_id"] == 0) & (df["dayofyear"] <= 141)) |
          ((df["site_id"] == 15) & (df["dayofyear"].between(42, 88))))
 df = df.loc[mask]
 
 '''
+
 from sklearn.model_selection import GridSearchCV, PredefinedSplit
-df_tune = df.query("site_id == "0")
+df_tune = df.query("site_id == '0'")
 scoring = {"spear": make_scorer(spearman_loss_func, greater_is_better=True),
            "rmse": make_scorer(rmse, greater_is_better=False)}
 metric = "rmse"
 
 split_index = PredefinedSplit(df_tune["fold"].map({"train": -1, "test": 0}).values)
 fit = GridSearchCV(xgb.XGBRegressor(n_jobs = 7),
-                   [{"n_estimators": [x for x in range(100, 5100, 1000)], "learning_rate": [0.01],
-                     "max_depth": [9,12], "min_child_weight": [10],
+                   [{"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.1,0.01],
+                     "max_depth": [6,9], "min_child_weight": [10],
                      "subsample": [1], "colsample_by_tree": [0.5],
                      "gamma": [0]}],
                    cv=split_index.split(df_tune),
@@ -115,6 +119,7 @@ sns.FacetGrid(df_fitres, col="param_min_child_weight", margin_titles=True) \
          hue="#" + df_fitres["param_max_depth"].astype('str'),  # needs to be string not starting with "_"
          style=df_fitres["param_learning_rate"],
          marker="o").add_legend()
+         
 '''
 
 

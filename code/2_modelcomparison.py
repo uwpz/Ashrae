@@ -36,7 +36,7 @@ df, features_lasso, features_xgb, features_lgbm = \
 # ######################################################################################################################
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
-df_tune = df.sample(n=min(df.shape[0], int(1e4)))#.query("target_iszero==0")
+df_tune = df.sample(n=min(df.shape[0], int(1e5)))
 df_tune.target_iszero.describe()
 
 
@@ -84,7 +84,7 @@ pd.DataFrame.from_dict(fit.cv_results_)\
 # XGBoost
 fit = GridSearchCV(xgb.XGBRegressor() if TARGET_TYPE == "REGR" else xgb.XGBClassifier(),
                    [{"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
-                     "max_depth": [9], "min_child_weight": [10], "colsample_bytree": [0.5]}],
+                     "max_depth": [6, 9], "min_child_weight": [10], "colsample_bytree": [0.5]}],
                    cv=split_index.split(df_tune),
                    refit=False,
                    scoring=scoring,
@@ -217,7 +217,7 @@ df_modelcomp_result = df_modelcomp_result.append(pd.DataFrame.from_dict(cvresult
 # Xgboost
 cvresults = cross_validate(
       estimator=GridSearchCV(xgb.XGBRegressor() if TARGET_TYPE == "REGR" else xgb.XGBClassifier(),
-                             [{"n_estimators": [x for x in range(1100, 3100, 500)], "learning_rate": [0.01],
+                             [{"n_estimators": [x for x in range(1100, 3100, 1000)], "learning_rate": [0.01],
                                "max_depth": [6], "min_child_weight": [10]}],
                              cv=ShuffleSplit(1, 0.2, random_state=999),  # just 1-fold for tuning
                              refit=metric,
@@ -255,7 +255,7 @@ df_lc = df_tune.copy()
 # Calc learning curve
 n_train, score_train, score_test = learning_curve(
       estimator=GridSearchCV(xgb.XGBRegressor() if TARGET_TYPE == "REGR" else xgb.XGBClassifier(),
-                             [{"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
+                             [{"n_estimators": [x for x in range(1100, 3100, 1000)], "learning_rate": [0.01],
                                "max_depth": [6], "min_child_weight": [10]}],
                              cv=ShuffleSplit(1, 0.2, random_state=999),  # just 1-fold for tuning
                              refit=metric,

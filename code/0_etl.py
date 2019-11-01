@@ -27,7 +27,10 @@ df_train = pd.read_csv(dataloc + "train.csv", parse_dates=["timestamp"], dtype={
 #df_test = pd.read_csv(dataloc + "test.csv", parse_dates=["timestamp"], dtype={'meter': object})
 
 # Sample
-df_train = df_train.query("site_id == 2")
+df_tmp = pd.read_csv(dataloc + "building_metadata.csv", dtype={'floor_count': object})[["site_id","building_id"]]
+df_tmp.groupby("site_id").nunique()
+df_train = df_train.merge(df_tmp.query("site_id == 4")[["building_id"]], how="inner", on="building_id")
+df_train.shape
 #np.random.seed(123)
 #n_buildings = 100
 #buildings = df_train["building_id"].sample(n_buildings).values
@@ -65,15 +68,13 @@ df_weather = pd.concat([pd.read_csv(dataloc + "weather_train.csv", parse_dates=[
                                     dtype={'cloud_coverage': object, 'precip_depth_1_hr': object}),
                         pd.read_csv(dataloc + "weather_test.csv", parse_dates=["timestamp"],
                                     dtype={'cloud_coverage': object, 'precip_depth_1_hr': object})])
-'''
-#TODO: convert timezone
-country = {0:1,1:2,2:1,3:1,4:1,5:2,6:1,7:3,8:1,9:1,10:1,11:3,12:4,13:1,14:1,15:1} 
-weather_train_df['country'] = weather_train_df['site_id'].map(country) 
-timediff = {0:4,1:0,2:7,3:4,4:7,5:0,6:4,7:4,8:4,9:5,10:7,11:4,12:0,13:5,14:4,15:4} 
-weather_train_df['time_diff']= weather_train_df['site_id'].map(timediff)
-target_train_df['hour'] = target_train_df['hour'] + target_train_df['time_diff'] 
-target_train_df.loc[target_train_df['hour']>23, 'hour'] = target_train_df[target_train_df['hour']>23]['hour'] - 24
-'''
+
+# Convert to local time
+d_site2hourdiff = {0: 4, 1: 0, 2: 7, 3: 4, 4: 7, 5: 0, 6: 4, 7: 4, 8: 4,
+                   9: 5, 10: 7, 11: 4, 12: 0, 13: 5, 14: 4, 15: 4}
+df_weather["timestamp"] = df_weather["timestamp"] - \
+                          pd.to_timedelta(df_weather["site_id"].map(d_site2hourdiff), "hour")
+
 # Timeseries processing
 df_weather = (df_weather.set_index(['timestamp','site_id']).unstack('site_id')
               [['air_temperature', 'dew_temperature', 'sea_level_pressure', 'wind_direction', 'wind_speed']]
@@ -123,6 +124,7 @@ df_building['sq_floor'] = df_building['square_feet'] / df_building['floor_count'
 df = (df_train.merge(df_building, how="left", on=["building_id"])
       .merge(df_weather, how="left", on=["site_id", "timestamp"]))
 
+'''
 # Some checks
 #fig, ax = plt.subplots(4,4)
 sns.heatmap(df.groupby(["dayofyear", "meter", "site_id", "building_id", "meter"])["target_iszero"].mean().unstack("dayofyear"))
@@ -132,7 +134,7 @@ for site_id in range(16):
     sns.heatmap(df.loc[df["site_id"] == site_id]
                 .groupby(["dayofyear", "site_id", "meter", "building_id"])["target_iszero"].mean().unstack("dayofyear"))
 # site_id=0: <=141, site_id=15: >= 42 <=88 -> remove
-
+'''
 
 # --- Read metadata (Project specific) -----------------------------------------------------------------------------
 df_meta = (pd.read_excel(dataloc + "DATAMODEL_ashrae.xlsx")

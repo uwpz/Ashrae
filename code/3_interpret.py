@@ -21,7 +21,7 @@ TARGET_TYPE = "REGR"
 scoring = {"spear": make_scorer(spearman_loss_func, greater_is_better=True),
            "rmse": make_scorer(rmse, greater_is_better=False)}
 metric = "spear"
-importance_cut = 95
+importance_cut = 99
 topn = 10
 ylim_res = (-1.5, 1.5)
 
@@ -30,7 +30,6 @@ with open(TARGET_TYPE + "_1_explore.pkl", "rb") as file:
     d_vars = pickle.load(file)
 df, features_lasso, features_xgb, features_lgbm = \
     d_vars["df"], d_vars["features_lasso"], d_vars["features_xgb"], d_vars["features_lgbm"]
-#df = df.query("target_iszero==0")
 metr = features_xgb["metr"]
 cate = features_xgb["cate"]
 features = np.append(metr, cate)
@@ -53,7 +52,7 @@ gamma = 0
 
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
-df_train = df.query("fold == 'train'").sample(n=min(df.query("fold == 'train'").shape[0], int(10e3)))
+df_train = df.query("fold == 'train'")#.sample(n=min(df.query("fold == 'train'").shape[0], int(1e5)))
 b_sample = None
 b_all = None
 
@@ -192,14 +191,14 @@ topn_features = df_varimp["feature"].values[range(topn)]
 df_varimp["Category"] = pd.cut(df_varimp["importance"], [-np.inf, 10, 50, np.inf], labels=["low", "medium", "high"])
 
 # Crossvalidate Importance: ONLY for topn_vars
-df_varimp_cv = pd.DataFrame()
-for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
-    df_tmp = calc_varimp_by_permutation(df_traintest.iloc[i_train, :], df_traintest, d_cv["estimator"][i],
-                                        "target", metr, cate, TARGET_TYPE,
-                                        b_sample, b_all,
-                                        features=topn_features)
-    df_tmp["run"] = i
-    df_varimp_cv = df_varimp_cv.append(df_tmp)
+# df_varimp_cv = pd.DataFrame()
+# for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
+#     df_tmp = calc_varimp_by_permutation(df_traintest.iloc[i_train, :], df_traintest, d_cv["estimator"][i],
+#                                         "target", metr, cate, TARGET_TYPE,
+#                                         b_sample, b_all,
+#                                         features=topn_features)
+#     df_tmp["run"] = i
+#     df_varimp_cv = df_varimp_cv.append(df_tmp)
 
 
 # Plot
