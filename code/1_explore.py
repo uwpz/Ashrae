@@ -6,7 +6,6 @@
 # General libraries, parameters and functions
 from os import getcwd, chdir
 chdir("../Ashrae")
-from os import getcwd
 import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 from initialize import *
 

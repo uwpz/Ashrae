@@ -91,18 +91,24 @@ mask = ~(((df["site_id"] == 0) & (df["dayofyear"] <= 141)) |
 df = df.loc[mask]
 
 '''
+#import dill
+#dill.dump_session("tmp.pkl")
+#dill.load_session("tmp.pkl")
+                
+df["site_id"].value_counts()
 
+site_id = "9"
 from sklearn.model_selection import GridSearchCV, PredefinedSplit
-df_tune = df.query("site_id == '0'")
+df_tune = df.query("site_id == '"+ site_id + "'").sample(n=int(1e6))
 scoring = {"spear": make_scorer(spearman_loss_func, greater_is_better=True),
            "rmse": make_scorer(rmse, greater_is_better=False)}
-metric = "rmse"
+metric = "spear"
 
 split_index = PredefinedSplit(df_tune["fold"].map({"train": -1, "test": 0}).values)
 fit = GridSearchCV(xgb.XGBRegressor(n_jobs = 7),
-                   [{"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.1,0.01],
-                     "max_depth": [6,9], "min_child_weight": [10],
-                     "subsample": [1], "colsample_by_tree": [0.5],
+                   [{"n_estimators": [x for x in range(50, 650, 100)], "learning_rate": [0.01],
+                     "max_depth": [9], "min_child_weight": [10],
+                     "subsample": [1], "colsample_by_tree": [1],
                      "gamma": [0]}],
                    cv=split_index.split(df_tune),
                    refit=False,
@@ -114,11 +120,13 @@ fit = GridSearchCV(xgb.XGBRegressor(n_jobs = 7),
                             df_ref=df_tune).fit_transform(df_tune), df_tune["target"])
 df_fitres = pd.DataFrame.from_dict(fit.cv_results_)
 df_fitres.mean_fit_time.values.mean()
-sns.FacetGrid(df_fitres, col="param_min_child_weight", margin_titles=True) \
+fig = sns.FacetGrid(df_fitres, col="param_colsample_by_tree", margin_titles=True) \
     .map(sns.lineplot, "param_n_estimators", "mean_test_" + metric,  # do not specify x= and y=!
          hue="#" + df_fitres["param_max_depth"].astype('str'),  # needs to be string not starting with "_"
          style=df_fitres["param_learning_rate"],
          marker="o").add_legend()
+fig.savefig(plotloc + "tune_" + site_id + "_" + metric + ".pdf")
+
          
 '''
 

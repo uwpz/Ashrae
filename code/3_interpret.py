@@ -4,7 +4,8 @@
 # ######################################################################################################################
 
 # General libraries, parameters and functions
-from os import getcwd
+from os import getcwd, chdir
+chdir("../Ashrae")
 import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 from initialize import *
 
@@ -52,7 +53,7 @@ gamma = 0
 
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
-df_train = df.query("fold == 'train'")#.sample(n=min(df.query("fold == 'train'").shape[0], int(1e5)))
+df_train = df.query("fold == 'train'").sample(n=min(df.query("fold == 'train'").shape[0], int(1e5)))
 b_sample = None
 b_all = None
 
