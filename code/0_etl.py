@@ -4,17 +4,14 @@
 # ######################################################################################################################
 
 # General libraries, parameters and functions
-from os import getcwd, chdir
-chdir("../Ashrae")
-from os import getcwd
-import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
+'''
+import os, sys
+os.chdir("../Ashrae")
+sys.path.append(os.getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
+'''
 from initialize import *
 
 # Specific libraries
-#  from scipy.stats.mstats import winsorize  # too slow
-from datetime import datetime
-from statsmodels.graphics.tsaplots import plot_pacf
-from statsmodels.tsa.seasonal import seasonal_decompose
 
 
 # ######################################################################################################################
@@ -22,19 +19,20 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 # ######################################################################################################################
 
 # --- Training -----------------------------------------------------------------------------------------------------
+
 # Read
 df_train = pd.read_csv(dataloc + "train.csv", parse_dates=["timestamp"], dtype={'meter': object})
 #df_test = pd.read_csv(dataloc + "test.csv", parse_dates=["timestamp"], dtype={'meter': object})
 
 # Sample
-df_tmp = pd.read_csv(dataloc + "building_metadata.csv", dtype={'floor_count': object})[["site_id","building_id"]]
+df_tmp = pd.read_csv(dataloc + "building_metadata.csv", dtype={'floor_count': object})[["site_id", "building_id"]]
 df_tmp.groupby("site_id").nunique()
-df_train = df_train.merge(df_tmp.query("site_id == 4")[["building_id"]], how="inner", on="building_id")
-df_train.shape
-#np.random.seed(123)
-#n_buildings = 100
-#buildings = df_train["building_id"].sample(n_buildings).values
-#df_train = df_train[df_train["building_id"].isin(buildings)]
+#df_train = df_train.merge(df_tmp.query("site_id == 4")[["building_id"]], how="inner", on="building_id")
+#df_train.shape
+np.random.seed(123)
+n_buildings = 100
+buildings = df_train["building_id"].sample(n_buildings).values
+df_train = df_train[df_train["building_id"].isin(buildings)]
 
 # Timeseries processing
 '''
@@ -48,18 +46,33 @@ df_train = (df_train.replace({"meter_reading": {0: np.nan}})  # Replace 0 with m
 '''
 
 # FE
-df_train = df_train.set_index("timestamp")
-df_train["hour"] = df_train.index.hour.astype("str").str.zfill(2)
-df_train["dayofweek"] = df_train.index.dayofweek.astype("str")
+df_train["hour"] = df_train["timestamp"].dt.hour.astype("str").str.zfill(2)
+df_train["dayofweek"] = df_train["timestamp"].dt.dayofweek.astype("str")
 df_train["weekend"] = np.where(df_train.dayofweek.isin(["5", "6"]), 1, 0).astype("str")
-df_train["week"] = df_train.index.week
-df_train["month"] = df_train.index.month.astype("str").str.zfill(2)
-df_train["dayofyear"] = df_train.index.dayofyear
-df_train = df_train.reset_index()
+df_train["week"] = df_train["timestamp"].dt.week
+df_train["month"] = df_train["timestamp"].dt.month.astype("str").str.zfill(2)
+df_train["dayofyear"] = df_train["timestamp"].dt.dayofyear
+
+
+# --- Target -----------------------------------------------------------------------------------------------------
 
 # Define target
 df_train["target"] = np.log(df_train["meter_reading"] + 1)
 df_train["target_iszero"] = np.where(df_train["meter_reading"] == 0, 1, 0)
+
+# Scale (before winsorizing) target
+df_train["target"].hist(by=df_train["meter"], bins=50)
+group_cols = ["building_id", "meter"]
+df_train["mean_target"] = df_train.groupby(group_cols)["target"].transform("mean")
+df_train["std_target"] = df_train.groupby(group_cols)["target"].transform("std")
+df_train["target_zscore"] = (df_train["target"] - df_train["mean_target"]) / df_train["std_target"]
+df_train["target_zscore"].describe().round(2)
+df_train["target_zscore"].hist(bins=50)
+
+# Winsorize
+tmp_quantile = np.quantile(df_train["target_zscore"], np.array([0.01, 0.99]))
+df_train["target_zscore"] = df_train["target_zscore"].clip(lower = tmp_quantile[0], upper = tmp_quantile[1])
+df_train["target_zscore"].hist(bins=50)
 
 
 # --- Weather -----------------------------------------------------------------------------------------------------
@@ -75,17 +88,17 @@ d_site2hourdiff = {0: 4, 1: 0, 2: 7, 3: 4, 4: 7, 5: 0, 6: 4, 7: 4, 8: 4,
 df_weather["timestamp"] = df_weather["timestamp"] - \
                           pd.to_timedelta(df_weather["site_id"].map(d_site2hourdiff), "hour")
 
-# Timeseries processing
-df_weather = (df_weather.set_index(['timestamp','site_id']).unstack('site_id')
+# Timeseries processing: Fill missings and gaps
+df_weather = (df_weather.set_index(['timestamp', 'site_id']).unstack('site_id')
               [['air_temperature', 'dew_temperature', 'sea_level_pressure', 'wind_direction', 'wind_speed']]
               .ffill().bfill()  # fill missing
               .resample("H").ffill().bfill()  # fill gaps
               .stack().reset_index()
               .merge(df_weather[['site_id', 'timestamp', 'cloud_coverage', 'precip_depth_1_hr']],
-                     how="left", on=['site_id', 'timestamp']))  # add non-imputed columns
+                     how="left", on=['site_id', 'timestamp']))  # add (non-imputed) categorical columns
 
 # FE
-# TODO
+# TODO for air_temperature: lag1h, lag2h, avg12h, min12h, max12h
 '''
 sales_lag1d = df_train[ids + ["zsales_log", "onpromotion"]]\
     .rename(columns={"zsales_log": "zsales_log_lag1d", "onpromotion": "onpromotion_lag1d"})\
@@ -127,13 +140,19 @@ df = (df_train.merge(df_building, how="left", on=["building_id"])
 '''
 # Some checks
 #fig, ax = plt.subplots(4,4)
-sns.heatmap(df.groupby(["dayofyear", "meter", "site_id", "building_id", "meter"])["target_iszero"].mean().unstack("dayofyear"))
+(sns.heatmap(df.groupby(["dayofyear", "meter", "site_id", "building_id", "meter"])["target_iszero"].mean()
+    .unstack("dayofyear")))
 df.groupby("site_id")["building_id"].nunique().sort_values()
 for site_id in range(16):
     fig, ax = plt.subplots(1, 1)
     sns.heatmap(df.loc[df["site_id"] == site_id]
                 .groupby(["dayofyear", "site_id", "meter", "building_id"])["target_iszero"].mean().unstack("dayofyear"))
 # site_id=0: <=141, site_id=15: >= 42 <=88 -> remove
+
+df.groupby(["building_id", "meter"])["target"].count().reset_index()[["target"]].boxplot()
+(df.loc[df["building_id"].isin(df["building_id"].sample(10).values), :]
+    .boxplot("target", by = ["building_id", "meter"], showmeans = True))
+
 '''
 
 # --- Read metadata (Project specific) -----------------------------------------------------------------------------
@@ -146,7 +165,7 @@ print(setdiff(df_meta["variable"].values, df.columns.values))
 print(setdiff(df_meta.loc[df_meta["status"] == "ready", "variable"].values, df.columns.values))
 
 # Filter on "ready"
-df_meta_sub = df_meta.loc[df_meta["status"].isin(["ready"])]
+df_meta_sub = df_meta.loc[df_meta["status"].isin(["ready"])].reset_index()
 
 
 # --- Save image ------------------------------------------------------------------------------------------------------
@@ -158,4 +177,3 @@ with open("0_etl.pkl", "wb") as file:
                  "df_weather": df_weather,
                  "df_building": df_building},
                 file)
-

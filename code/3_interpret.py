@@ -1,38 +1,41 @@
-
 # ######################################################################################################################
 #  Initialize: Libraries, functions, parameters
 # ######################################################################################################################
 
 # General libraries, parameters and functions
-from os import getcwd, chdir
-chdir("../Ashrae")
-import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
+'''
+import os, sys
+os.chdir("../Ashrae")
+sys.path.append(os.getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
+'''
 from initialize import *
 
 # Specific libraries
 from sklearn.model_selection import cross_validate
-from sklearn.base import clone
-import xgboost as xgb
-import lightgbm as lgbm
 
 # Main parameter
 TARGET_TYPE = "REGR"
+target = "target_zscore"
+n_jobs = 4
 
 # Specific parameters
-scoring = {"spear": make_scorer(spearman_loss_func, greater_is_better=True),
-           "rmse": make_scorer(rmse, greater_is_better=False)}
+labels = None
 metric = "spear"
-importance_cut = 99
+importance_cut = 95
 topn = 10
 ylim_res = (-1.5, 1.5)
+color = None
 
 # Load results from exploration
+df = metr_standard = cate_standard = metr_binned = cate_binned = metr_encoded = cate_encoded = target_labels = None
 with open(TARGET_TYPE + "_1_explore.pkl", "rb") as file:
-    d_vars = pickle.load(file)
-df, features_lasso, features_xgb, features_lgbm = \
-    d_vars["df"], d_vars["features_lasso"], d_vars["features_xgb"], d_vars["features_lgbm"]
-metr = features_xgb["metr"]
-cate = features_xgb["cate"]
+    d_pick = pickle.load(file)
+for key, val in d_pick.items():
+    exec(key + "= val")
+
+# Features for xgboost
+metr = metr_standard
+cate = cate_standard
 features = np.append(metr, cate)
 
 
@@ -40,28 +43,28 @@ features = np.append(metr, cate)
 # Prepare
 # ######################################################################################################################
 
-# Tuning parameter to use (for xgb)
-n_estimators = 2100
-learning_rate = 0.01
-max_depth = 6
-num_leaves = 32
-min_child_weight = 10
-min_child_samples = 10
-colsample_bytree = 1
-subsample = 1
-gamma = 0
+# Tuning parameter to use (for xgb) and classifier definition
+xgb_param = dict(n_estimators = 2600, learning_rate = 0.01,
+                 max_depth = 6, min_child_weight = 10,
+                 colsample_bytree = 0.7, subsample = 0.7,
+                 gamma = 0,
+                 verbosity = 0,
+                 n_jobs = n_jobs)
+clf = xgb.XGBRegressor(**xgb_param)
 
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
-df_train = df.query("fold == 'train'").sample(n=min(df.query("fold == 'train'").shape[0], int(1e5)))
+
+df_train = (df.query("fold == 'train'").sample(n = min(df.query("fold == 'train'").shape[0], int(1e5)))
+            .reset_index(drop = True))
 b_sample = None
 b_all = None
 
 # Test data
-df_test = df.query("fold == 'test'")  # .sample(300) #ATTENTION: Do not sample in final run!!!
+df_test = df.query("fold == 'test'").reset_index(drop = True).sample(int(1e5)).reset_index(drop=True)
 
 # Combine again
-df_traintest = pd.concat([df_train, df_test])
+df_traintest = pd.concat([df_train, df_test]).reset_index(drop = True)
 
 # Folds for crossvalidation and check
 split_my5fold = TrainTestSep(5, "cv")
@@ -78,69 +81,58 @@ for i_train, i_test in split_my5fold.split(df_traintest):
 # --- Do the full fit and predict on test data -------------------------------------------------------------------
 
 # Fit
-clf = xgb.XGBRegressor(n_estimators=n_estimators, learning_rate=learning_rate,
-                       max_depth=max_depth, min_child_weight=min_child_weight,
-                       colsample_bytree=colsample_bytree, subsample=subsample,
-                       gamma=0,
-                       n_jobs=12)
-# clf = lgbm.LGBMRegressor(n_estimators=n_estimators, learning_rate=learning_rate,
-#                          num_leaves=num_leaves, min_child_samples=min_child_samples)
-
-X_train = CreateSparseMatrix(metr=metr,
-                             cate=cate,
-                             df_ref=df_traintest).fit_transform(df_train)
-fit = clf.fit(X_train, df_train["target"].values)
+tr_spm = CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_traintest)
+X_train = tr_spm.fit_transform(df_train)
+fit = clf.fit(X_train, df_train[target].values)
 
 # Predict
-X_test = CreateSparseMatrix(metr=metr,
-                            cate=cate,
-                            df_ref=df_traintest).fit_transform(df_test)
+X_test = tr_spm.transform(df_test)
 yhat_test = fit.predict(X_test)
-pd.DataFrame(yhat_test).describe()
-print(spearman_loss_func(df_test["target"].values, yhat_test))
-print(rmse(df_test["target"].values, yhat_test))
+print(pd.DataFrame(yhat_test).describe())
+
+# Performance
+print(spear(df_test[target].values, yhat_test))
 
 # Plot performance
-plot_all_performances(df_test["target"], yhat_test, target_type=TARGET_TYPE, ylim=None,
-                      pdf=plotloc + TARGET_TYPE + "_performance.pdf")
+plot_all_performances(df_test[target], yhat_test, target_labels = target_labels, target_type = TARGET_TYPE,
+                      color = color, ylim = None,
+                      pdf = plotloc + TARGET_TYPE + "_performance.pdf")
 
 
 # --- Check performance for crossvalidated fits ---------------------------------------------------------------------
-d_cv = cross_validate(clf,
-                      CreateSparseMatrix(metr=metr,
-                                         cate=cate,
-                                         df_ref=df_traintest).fit_transform(df_traintest),
-                      df_traintest["target"].values,
-                      cv=split_my5fold.split(df_traintest),  # special 5fold
-                      scoring=scoring,
-                      return_estimator=True,
-                      n_jobs=1)
+
+d_cv = cross_validate(clf, tr_spm.transform(df_traintest), df_traintest[target],
+                      cv = split_my5fold.split(df_traintest),  # special 5fold
+                      scoring = d_scoring[TARGET_TYPE],
+                      return_estimator = True,
+                      n_jobs = 4)
 # Performance
-print(d_cv["test_spear"])
-print(d_cv["test_rmse"])
+print(d_cv["test_" + metric])
 
 
 # --- Most important variables (importance_cum < 95) model fit ------------------------------------------------------
+
 # Variable importance (on train data!)
-df_varimp_train = calc_varimp_by_permutation(df_train, df_traintest, fit, "target", metr, cate, target_type=TARGET_TYPE,
-                                             b_sample=b_sample, b_all=b_all, n_jobs=12)
+df_varimp_train = calc_varimp_by_permutation(df_train, fit, tr_spm = tr_spm, target = target,
+                                             target_type = TARGET_TYPE,
+                                             b_sample = b_sample, b_all = b_all)
 
 # Top features (importances sum up to 95% of whole sum)
 features_top = df_varimp_train.loc[df_varimp_train["importance_cum"] < importance_cut, "feature"].values
 
 # Fit again only on features_top
-X_train_top = CreateSparseMatrix(metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
-                                 df_ref=df_traintest).fit_transform(df_train)
-fit_top = clone(clf).fit(X_train_top, df_train["target"])
+tr_spm_top = CreateSparseMatrix(metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
+                                df_ref = df_traintest).fit()
+X_train_top = tr_spm_top.transform(df_train)
+fit_top = clone(clf).fit(X_train_top, df_train[target])
 
 # Plot performance
-X_test_top = CreateSparseMatrix(metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
-                                df_ref=df_traintest).fit_transform(df_test)
+X_test_top = tr_spm_top.transform(df_test)
 yhat_top = fit_top.predict(X_test_top)
-print(spearman_loss_func(df_test["target"].values, yhat_top))
-
-plot_all_performances(df_test["target"], yhat_top, target_type=TARGET_TYPE,
-                      pdf=plotloc + TARGET_TYPE + "_performance_top.pdf")
+print(spear(df_test[target].values, yhat_top))
+plot_all_performances(df_test[target], yhat_top, target_labels = target_labels, target_type = TARGET_TYPE,
+                      regplot = False, color = color, ylim = None,
+                      pdf = plotloc + TARGET_TYPE + "_performance_top.pdf")
 
 
 # ######################################################################################################################
@@ -150,28 +142,33 @@ plot_all_performances(df_test["target"], yhat_top, target_type=TARGET_TYPE,
 # ---- Check residuals --------------------------------------------------------------------------------------------
 
 # Residuals
-df_test["yhat"] = yhat_test
+df_test["residual"] = df_test[target] - yhat_test
 
-df_test["residual"] = df_test["target"] - df_test["yhat"]
 df_test["abs_residual"] = df_test["residual"].abs()
 df_test["residual"].describe()
 
-
-# For non-regr tasks one might want to plot it for each target level (df_test.query("target == 0/1"))
-plot_distr(df_test, features, target="residual", target_type="REGR", ylim=ylim_res,
-           ncol=3, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_diagnosis_residual.pdf")
-plt.close(fig="all")
-
-
 # Absolute residuals
-if TARGET_TYPE in ["CLASS", "REGR"]:
-    plot_distr(df_test, features, target="abs_residual", target_type="REGR", ylim=(0,ylim_res[1]),
-               ncol=3, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_diagnosis_absolute_residual.pdf")
+plot_distr(df = df_test, features = features, target = "abs_residual",
+           target_type = "REGR",
+           ylim = (0, ylim_res[1]), regplot = False,
+           ncol = 3, nrow = 2, w = 18, h = 12,
+           pdf = plotloc + TARGET_TYPE + "_diagnosis_absolute_residual.pdf")
+plt.close(fig = "all")
 
 
 # ---- Explain bad predictions ------------------------------------------------------------------------------------
 
-# TODOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+# Get shap for n_worst predicted records
+n_worst = 10
+df_explain = df_test.sort_values("abs_residual", ascending = False).iloc[:n_worst, :]
+yhat_explain = yhat_test[df_explain.index.values]
+df_shap = calc_shap(df_explain, fit, tr_spm = tr_spm,
+                    target_type = TARGET_TYPE, b_sample = b_sample, b_all = b_all)
+
+# Check
+check_shap(df_shap, yhat_explain, target_type = TARGET_TYPE)
+
+# Plot: TODO
 
 
 # ######################################################################################################################
@@ -179,71 +176,106 @@ if TARGET_TYPE in ["CLASS", "REGR"]:
 # ######################################################################################################################
 
 # --- Default Variable Importance: uses gain sum of all trees ----------------------------------------------------------
+
 xgb.plot_importance(fit)
 
 
 # --- Variable Importance by permuation argument -------------------------------------------------------------------
+
 # Importance for "total" fit (on test data!)
-df_varimp = calc_varimp_by_permutation(df_test, df_traintest, fit, "target", metr, cate, target_type=TARGET_TYPE,
-                                       b_sample=b_sample, b_all=b_all)
+df_varimp = calc_varimp_by_permutation(df_test, fit, tr_spm = tr_spm, target = target,
+                                       target_type = TARGET_TYPE,
+                                       b_sample = b_sample, b_all = b_all)
 topn_features = df_varimp["feature"].values[range(topn)]
 
 # Add other information (e.g. special category): category variable is needed -> fill with at least with "dummy"
-df_varimp["Category"] = pd.cut(df_varimp["importance"], [-np.inf, 10, 50, np.inf], labels=["low", "medium", "high"])
+df_varimp["Category"] = pd.cut(df_varimp["importance"], [-np.inf, 10, 50, np.inf], labels = ["low", "medium", "high"])
 
 # Crossvalidate Importance: ONLY for topn_vars
-# df_varimp_cv = pd.DataFrame()
-# for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
-#     df_tmp = calc_varimp_by_permutation(df_traintest.iloc[i_train, :], df_traintest, d_cv["estimator"][i],
-#                                         "target", metr, cate, TARGET_TYPE,
-#                                         b_sample, b_all,
-#                                         features=topn_features)
-#     df_tmp["run"] = i
-#     df_varimp_cv = df_varimp_cv.append(df_tmp)
-
+'''
+df_varimp_cv = pd.DataFrame()
+for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
+    df_tmp = calc_varimp_by_permutation(df_traintest.iloc[i_train, :], d_cv["estimator"][i], tr_spm = tr_spm,
+                                        target = target, target_type = TARGET_TYPE,
+                                        b_sample = b_sample, b_all = b_all,
+                                        features = topn_features)
+    df_tmp["run"] = i
+    df_varimp_cv = df_varimp_cv.append(df_tmp)
+'''
 
 # Plot
-fig, ax = plt.subplots(1, 1)
-sns.barplot("importance", "feature", hue="Category", data=df_varimp.iloc[range(topn)],
-            dodge=False, palette=sns.xkcd_palette(["blue", "orange", "red"]), ax=ax)
-ax.plot("importance_cum", "feature", data=df_varimp.iloc[range(topn)], color="grey", marker="o")
-ax.set_xlabel(r"importance / cumulative importance in % (-$\bullet$-)")
-# noinspection PyTypeChecker
-ax.set_title("Top{0: .0f} (of{1: .0f}) Feature Importances".format(topn, len(features)))
-fig.tight_layout()
-fig.savefig(plotloc + TARGET_TYPE + "_variable_importance.pdf")
+plot_variable_importance(df_varimp, mask = df_varimp["feature"].isin(topn_features),
+                         pdf = plotloc + TARGET_TYPE + "_variable_importance.pdf")
+# TODO: add cv lines and errorbars
 
 
 # --- Compare variable importance for train and test (hints to variables prone to overfitting) -------------------------
+
 fig, ax = plt.subplots(1, 1)
-sns.barplot("importance_sumnormed", "feature", hue="fold",
-            data=pd.concat([df_varimp_train.assign(fold="train"), df_varimp.assign(fold="test")], sort=False))
+sns.barplot("importance_sumnormed", "feature", hue = "fold",
+            data = pd.concat([df_varimp_train.assign(fold = "train"), df_varimp.assign(fold = "test")], sort = False))
 
 
 # ######################################################################################################################
 # Partial Dependance
 # ######################################################################################################################
 
-df_pd = calc_partial_dependence(df_test, df_traintest, fit, "target", metr, cate, target_type=TARGET_TYPE,
-                                b_sample=b_sample, b_all=b_all,
-                                features=topn_features,
-                                n_jobs=12)
+# Calc PD
+df_pd = calc_partial_dependence(df = df_test, df_ref = df_traintest,
+                                fit = fit, tr_spm = tr_spm,
+                                target_type = TARGET_TYPE, target_labels = target_labels,
+                                b_sample = b_sample, b_all = b_all,
+                                features = topn_features)
 
-# # Crossvalidate Depedence
-# df_pd_cv = pd.DataFrame()
-# for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
-#     df_tmp = calc_partial_dependence(df_traintest.iloc[i_train, :], df_traintest, d_cv["estimator"][i],
-#                                      "target", metr, cate, TARGET_TYPE,
-#                                      b_sample, b_all,
-#                                      features=topn_features)
-#     df_tmp["run"] = i
-#     df_pd_cv = df_pd_cv.append(df_tmp)
+# Crossvalidate Dependance
+df_pd_cv = pd.DataFrame()
+for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
+    df_tmp = calc_partial_dependence(df = df_traintest.iloc[i_train, :], df_ref = df_traintest,
+                                     fit = d_cv["estimator"][i], tr_spm = tr_spm,
+                                     target_type = TARGET_TYPE, target_labels = target_labels,
+                                     b_sample = b_sample, b_all = b_all,
+                                     features = topn_features)
+    df_tmp["run"] = i
+    df_pd_cv = df_pd_cv.append(df_tmp)
+
+# Plot it
+# TODO
+f = plt.figure()
+plt.plot(1,1)
+f.savefig(plotloc + "pdp.pdf")
 
 
 # ######################################################################################################################
-# xgboost Explainer
+# Explanations
 # ######################################################################################################################
 
-# TODOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+# ---- Explain bad predictions ------------------------------------------------------------------------------------
 
+# Filter data
+n_select = 10
+i_worst = df_test.sort_values("abs_residual", ascending = False).iloc[:n_select, :].index.values
+i_best = df_test.sort_values("abs_residual", ascending = True).iloc[:n_select, :].index.values
+i_random = df_test.sample(n = 11).index.values
+i_explain = np.unique(np.concatenate([i_worst, i_best, i_random]))
+yhat_explain = yhat_test[i_explain]
+df_explain = df_test.iloc[i_explain, :].reset_index(drop = True)
+
+# Get shap
+df_shap = calc_shap(df_explain, fit, tr_spm = tr_spm,
+                    target_type = TARGET_TYPE, b_sample = b_sample, b_all = b_all)
+
+# Check
+check_shap(df_shap, yhat_explain, target_type = TARGET_TYPE)
+
+# Plot: TODO
+f = plt.figure()
+plt.plot(1,1)
+f.savefig(plotloc + "bp.pdf")
 plt.close("all")
+
+
+# ######################################################################################################################
+# Individual dependencies
+# ######################################################################################################################
+
+# TODO
