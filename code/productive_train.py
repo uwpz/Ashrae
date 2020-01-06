@@ -75,11 +75,18 @@ mask = ~(((df["site_id"] == 0) & (df["dayofyear"] <= 141)) |
          ((df["site_id"] == 15) & (df["dayofyear"].between(42, 88))))
 df = df.loc[mask].reset_index(drop = True)
 
-group_cols = ["building_id", "meter"]
-tmp = (df.groupby(group_cols)["target"].agg(mean_target = "mean", std_target = "std")
-                             .reset_index()
-                             .assign(std_target = lambda x: np.where(x["std_target"] == 0, 1, x["std_target"])))
-tmp.isna().sum()
+'''
+df["building_id_copy"] = df["building_id"]
+pipeline_tmp = Pipeline([
+    ("feature_engineering", FeatureEngineeringAshrae(derive_fe=True)),  # feature engineering
+    ("target_scale", ScaleTarget(target = "target", target_newname = "target_zscore",
+                                 group_cols = ["building_id", "meter"], winsorize_quantiles = [0.001, 0.999]))
+])
+df_tmp = pipeline_tmp.fit_transform(df, df["target"].values)
+df_tmp["target"].hist(bins=50)
+df_tmp["target_zscore"].hist(bins=50)
+df_tmp.building_id.value_counts()
+'''
 
 # ETL
 pipeline_etl = Pipeline([
@@ -100,8 +107,6 @@ df = pipeline_etl.fit_transform(df, df["target"].values, cate_map_nonexist__tran
 df["target"].hist(bins=50)
 df["target_zscore"].hist(bins=50)
 metr = np.append(metr, pipeline_etl.named_steps["cate_map_toomany"]._toomany + "_ENCODED")
-
-
 
 
 '''
