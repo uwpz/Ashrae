@@ -3,18 +3,21 @@
 # ######################################################################################################################
 
 # General libraries, parameters and functions
-from os import getcwd, chdir
-chdir("../Ashrae")
-import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
+'''
+import os, sys
+os.chdir("../Ashrae")
+sys.path.append(os.getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
+'''
 from initialize import *
 
 # Specific libraries
 from sklearn.pipeline import Pipeline
 import xgboost as xgb
 
-
 # Specific parameters
-# site_id filter
+n_jobs = 4
+plt.ion(); matplotlib.use('TkAgg')
+
 
 # ######################################################################################################################
 # Fit
@@ -38,10 +41,8 @@ df["target"] = np.log(df["meter_reading"] + 1)
 # df["target_iszero"] = np.where(df["meter_reading"] == 0, 1, 0)
 
 # Define data to be used for target encoding
-df = df.set_index("timestamp")
-df["week"] = df.index.week
-df = df.reset_index()
-np.random.seed(1)
+df["week"] = df["timestamp"].dt.week
+np.random.seed(999)
 tmp = np.random.permutation(df["week"].unique())
 weeks_util = tmp[:5]
 weeks_test = tmp[5:15]
@@ -64,31 +65,44 @@ cate = df_meta_sub.loc[(df_meta_sub["type"] == "cate") & (df_meta_sub["exclude"]
 
 # --- ETL -------------------------------------------------------------------------------------------------
 
-# df = df.sample(n=int(1e7))
 # df_save = df.copy()
-# df = df_save.copy()
+#df = df_save.copy()
+df = df.sample(n=int(1e4)).reset_index(drop = True)
 
+# Remove "main gaps"
+df["dayofyear"] = df["timestamp"].dt.dayofyear
+mask = ~(((df["site_id"] == 0) & (df["dayofyear"] <= 141)) |
+         ((df["site_id"] == 15) & (df["dayofyear"].between(42, 88))))
+df = df.loc[mask].reset_index(drop = True)
+
+group_cols = ["building_id", "meter"]
+tmp = (df.groupby(group_cols)["target"].agg(mean_target = "mean", std_target = "std")
+                             .reset_index()
+                             .assign(std_target = lambda x: np.where(x["std_target"] == 0, 1, x["std_target"])))
+tmp.isna().sum()
+
+# ETL
 pipeline_etl = Pipeline([
     ("feature_engineering", FeatureEngineeringAshrae(derive_fe=True)),  # feature engineering
+    ("target_scale", ScaleTarget(target = "target", target_newname = "target_zscore",
+                                 group_cols = ["building_id", "meter"], winsorize_quantiles = [0.001, 0.999])),
     ("metr_convert", Convert(features=metr, convert_to="float")),  # convert metr to "float"
     ("metr_imp", DfSimpleImputer(features=metr, strategy="median", verbose=1)),  # impute metr with median
-    ("cate_convert", Convert(features=cate, convert_to="str")) , # convert cate to "str"
+    ("cate_convert", Convert(features=cate, convert_to="str")),  # convert cate to "str"
+
     ("cate_imp", DfSimpleImputer(features=cate, strategy="constant", fill_value="(Missing)")),  # impute cate with const
     ("cate_map_nonexist", MapNonexisting(features=cate)),  # transform non-existing values: Collect information
     ("cate_enc", TargetEncoding(features=cate, encode_flag_column="encode_flag",
-                                target="target")),  # target-encoding
+                                target="target_zscore")),  # target-encoding
     ("cate_map_toomany", MapToomany(features=cate, n_top=30))  # reduce "toomany-members" categorical features
 ])
 df = pipeline_etl.fit_transform(df, df["target"].values, cate_map_nonexist__transform=False)
+df["target"].hist(bins=50)
+df["target_zscore"].hist(bins=50)
 metr = np.append(metr, pipeline_etl.named_steps["cate_map_toomany"]._toomany + "_ENCODED")
 
-# Filter "main gaps"
-df = df.set_index("timestamp")
-df["dayofyear"] = df.index.dayofyear
-df = df.reset_index()
-mask = ~(((df["site_id"] == 0) & (df["dayofyear"] <= 141)) |
-         ((df["site_id"] == 15) & (df["dayofyear"].between(42, 88))))
-df = df.loc[mask]
+
+
 
 '''
 #import dill
@@ -97,55 +111,52 @@ df = df.loc[mask]
                 
 df["site_id"].value_counts()
 
-site_id = "9"
 from sklearn.model_selection import GridSearchCV, PredefinedSplit
-df_tune = df.query("site_id == '"+ site_id + "'").sample(n=int(1e6))
-scoring = {"spear": make_scorer(spearman_loss_func, greater_is_better=True),
-           "rmse": make_scorer(rmse, greater_is_better=False)}
+
+#df_tune = df.query("site_id == '9'").sample(n=int(1e5)).reset_index(drop = True)
+df_tune = df.sample(n=int(1e3)).reset_index(drop = True)
+
+TARGET_TYPE = "REGR"
+target = "target_zscore"
 metric = "spear"
 
 split_index = PredefinedSplit(df_tune["fold"].map({"train": -1, "test": 0}).values)
-fit = GridSearchCV(xgb.XGBRegressor(n_jobs = 7),
-                   [{"n_estimators": [x for x in range(50, 650, 100)], "learning_rate": [0.01],
-                     "max_depth": [9], "min_child_weight": [10],
-                     "subsample": [1], "colsample_by_tree": [1],
-                     "gamma": [0]}],
-                   cv=split_index.split(df_tune),
-                   refit=False,
-                   scoring=scoring,
-                   return_train_score=True,
-                   n_jobs=2) \
-    .fit(CreateSparseMatrix(metr=metr,
-                            cate=cate,
-                            df_ref=df_tune).fit_transform(df_tune), df_tune["target"])
-df_fitres = pd.DataFrame.from_dict(fit.cv_results_)
-df_fitres.mean_fit_time.values.mean()
-fig = sns.FacetGrid(df_fitres, col="param_colsample_by_tree", margin_titles=True) \
-    .map(sns.lineplot, "param_n_estimators", "mean_test_" + metric,  # do not specify x= and y=!
-         hue="#" + df_fitres["param_max_depth"].astype('str'),  # needs to be string not starting with "_"
-         style=df_fitres["param_learning_rate"],
-         marker="o").add_legend()
-fig.savefig(plotloc + "tune_" + site_id + "_" + metric + ".pdf")
 
+start = time.time()
+fit = (GridSearchCV_xlgb(xgb.XGBRegressor(verbosity = 0),
+                         {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
+                          "max_depth": [6, 9], "min_child_weight": [10],
+                          "colsample_bytree": [0.7], "subsample": [0.7]},
+                         cv = split_index.split(df_tune),
+                         refit = False,
+                         scoring = d_scoring[TARGET_TYPE],
+                         return_train_score = True,
+                         n_jobs = n_jobs)
+       .fit(CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_tune).fit_transform(df_tune),
+            df_tune[target]))
+print(time.time()-start)
+pd.DataFrame(fit.cv_results_)
+plot_cvresult(fit.cv_results_, metric = metric,
+              x_var = "n_estimators", color_var = "max_depth", column_var = "min_child_weight")
          
 '''
 
 
 # --- Fit -----------------------------------------------------------------------------------------------
 
-# TODO: by my_site_id: lump site_id: 11,7,10,12,6,1 to my_site_id = 99
+# OLD TODO: by my_site_id: lump site_id: 11,7,10,12,6,1 to my_site_id = 99
 #df.groupby("site_id")["building_id"].nunique().sort_values()
 # Fit
 pipeline_fit = Pipeline([
     ("create_sparse_matrix", CreateSparseMatrix(metr=metr, cate=cate, df_ref=df)),
-    ("clf", xgb.XGBRegressor(n_estimators=5100, learning_rate=0.01,
-                             max_depth=15, min_child_weight=10,
-                             colsample_bytree=0.5, subsample=1,
+    ("clf", xgb.XGBRegressor(n_estimators=2600, learning_rate=0.01,
+                             max_depth=6, min_child_weight=10,
+                             colsample_bytree=0.7, subsample=0.7,
                              gamma=0,
-                             n_jobs=14))
+                             n_jobs=n_jobs))
 ])
-fit = pipeline_fit.fit(df, df["target"].values)
-# yhat = pipeline_fit.predict_proba(df)  # Test it
+fit = pipeline_fit.fit(df, df["target_zscore"])
+#yhat = pipeline_fit.predict(df)  # Test it
 
 
 # --- Save ----------------------------------------------------------------------------------

@@ -95,7 +95,7 @@ print(spear(df_test[target].values, yhat_test))
 
 # Plot performance
 plot_all_performances(df_test[target], yhat_test, target_labels = target_labels, target_type = TARGET_TYPE,
-                      color = color, ylim = None,
+                      regplot = False, color = color, ylim = None,
                       pdf = plotloc + TARGET_TYPE + "_performance.pdf")
 
 

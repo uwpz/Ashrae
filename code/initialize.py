@@ -1740,6 +1740,36 @@ class FeatureEngineeringTitanic(BaseEstimator, TransformerMixin):
         return df
 
 
+# Zscale target
+class ScaleTarget(BaseEstimator, TransformerMixin):
+    def __init__(self, target, target_newname, group_cols, winsorize_quantiles = None):
+        self.target = target
+        self.target_newname = target_newname
+        self.group_cols = group_cols
+        self.winsorize_quantiles = winsorize_quantiles
+        self.df_scaleinfo = None
+
+    def fit(self, df, y = None):
+        self.df_scaleinfo = (df.groupby(self.group_cols)[self.target].agg(mean_target = "mean", std_target = "std")
+                             .reset_index()
+                             .assign(std_target = lambda x: np.where(x["std_target"].isin([0, np.nan]), 1,
+                                                                     x["std_target"])))
+        return self
+
+    def transform(self, df, **fit_params):
+        if self.target in df.columns:
+            # Scale
+            df = df.merge(self.df_scaleinfo, how = "left", on = self.group_cols)
+            df[self.target_newname] = (df[self.target] - df["mean_target"]) / df["std_target"]
+
+            # Winsorize
+            if self.winsorize_quantiles is not None:
+                tmp_quantile = np.quantile(df[self.target_newname], np.array(self.winsorize_quantiles))
+                df[self.target_newname] = df[self.target_newname].clip(lower = tmp_quantile[0],
+                                                                       upper = tmp_quantile[1])
+        return df
+
+
 # Map Nonexisting members of a string column to modus
 class MapNonexisting(BaseEstimator, TransformerMixin):
     def __init__(self, features):
@@ -1763,3 +1793,24 @@ class MapNonexisting(BaseEstimator, TransformerMixin):
         else:
             self.fit(df)
             return df
+
+# Feature Engineering
+class FeatureEngineeringAshrae(BaseEstimator, TransformerMixin):
+    def __init__(self, derive_fe=True):
+        self.derive_fe = derive_fe
+
+    def fit(self, df, y=None):
+        return self
+
+    def transform(self, df):
+        if self.derive_fe:
+            df = df.set_index("timestamp")
+            df["hour"] = df.index.hour.astype("str").str.zfill(2)
+            df["dayofweek"] = df.index.dayofweek.astype("str")
+            df["weekend"] = np.where(df.dayofweek.isin(["5", "6"]), 1, 0).astype("str")
+            df["week"] = df.index.week
+            df["month"] = df.index.month.astype("str").str.zfill(2)
+            df = df.reset_index()
+            df['sq_floor'] = df['square_feet'] / df['floor_count'].astype("float")
+        return df
+
