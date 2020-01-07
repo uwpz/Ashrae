@@ -1545,54 +1545,44 @@ class Undersample(BaseEstimator, TransformerMixin):
         return df
 
 
-# Create sparse matrix
-class CreateSparseMatrix(BaseEstimator, TransformerMixin):
-    def __init__(self, metr = None, cate = None, df_ref = None, sparse = True):
+# Adapt final dataframe
+class CreateFinalDf(BaseEstimator, TransformerMixin):
+    def __init__(self, metr = None, cate = None, target = None):
         self.metr = metr
         self.cate = cate
-        self.df_ref = df_ref
-        self.sparse = sparse
-        self.d_categories = None
-        self.df_map = pd.DataFrame()
+        self.target = target
 
     def fit(self, df = None, *_):
-        if self.df_ref is None:
-            self.df_ref = df
-        if self.cate is not None and len(self.cate) > 0:
-            self.d_categories = {x: self.df_ref[x].unique() for x in self.cate}
-        if self.metr is not None and len(self.metr) > 0:
-            self.df_map = pd.concat([self.df_map,
-                                     pd.DataFrame({"variable": self.metr, "value": None})])
-        if self.cate is not None and len(self.cate) > 0:
-            self.df_map = pd.concat([self.df_map,
-                                     (pd.DataFrame.from_dict(self.d_categories, orient = 'index')
-                                      .T.melt().dropna().reset_index(drop = True))])
-        self.df_map = self.df_map.reset_index(drop=True).reset_index().rename(columns={"index": "position"})
         return self
 
     def transform(self, df = None, y = None):
-        if self.metr is not None and len(self.metr) > 0:
-            if self.sparse:
-                # m_metr = df[self.metr].to_sparse().to_coo()
-                m_metr = df[self.metr].astype(pd.SparseDtype("float", np.nan))
-            else:
-                m_metr = df[self.metr].to_numpy()
-        else:
-            m_metr = None
-        if self.cate is not None and len(self.cate) > 0:
-            enc = OneHotEncoder(categories = list(self.d_categories.values()), sparse = self.sparse)
+        columns = []
+        if self.metr is not None:
+            columns = np.append(columns, self.metr)
+        if self.cate is not None:
+            columns = np.append(columns, self.cate)
+        if self.target is not None:
+            columns = np.append(columns, self.target)
+        return df[columns]
 
-            m_cate = enc.fit_transform(df[self.cate], y)
-            # if len(self.cate) == 1:
-            #     m_cate = enc.fit_transform(df[self.cate].reshape(-1, 1), y)
-            # else:
-            #     m_cate = enc.fit_transform(df[self.cate], y)
-        else:
-            m_cate = None
-        if self.sparse:
-            return hstack([m_metr, m_cate], format = "csr")
-        else:
-            return np.hstack([m_metr, m_cate])
+
+class FeatureEngineeringTitanic(BaseEstimator, TransformerMixin):
+    def __init__(self, derive_deck = True, derive_familysize = True, derive_fare_pp = True):
+        self.derive_deck = derive_deck
+        self.derive_familysize = derive_familysize
+        self.derive_fare_pp = derive_fare_pp
+
+    def fit(self, *_):
+        return self
+
+    def transform(self, df, *_):
+        if self.derive_deck:
+            df["deck"] = df["cabin"].str[:1]
+        if self.derive_familysize:
+            df["familysize"] = df["sibsp"].astype("int") + df["parch"].astype("int") + 1
+        if self.derive_fare_pp:
+            df["fare_pp"] = df.groupby("ticket")["fare"].transform("mean")
+        return df
 
 
 # Incremental n_estimators GridSearch
