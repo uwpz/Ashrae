@@ -162,8 +162,8 @@ plot_cvresult(fit.cv_results_, metric = "spear",
 
 pipeline_fit = Pipeline([
     ("filter_df", CreateFinalDf(metr = encoded_cols)),
-    ("clf", lgbm.LGBMRegressor(n_estimators=1000, learning_rate=0.02,
-                               num_leaves=1024, min_child_samples=10,
+    ("clf", lgbm.LGBMRegressor(n_estimators=2000, learning_rate=0.02,
+                               num_leaves=2048, min_child_samples=10,
                                colsample_bytree=0.7, subsample=0.7,
                                n_jobs=n_jobs))
 ])
@@ -203,8 +203,8 @@ print(rmse(y_true, y_pred))
 
 pipeline_fit = Pipeline([
     ("filter_df", CreateFinalDf(metr = metr_encoded_zscore)),
-    ("clf", lgbm.LGBMRegressor(n_estimators=2000, learning_rate=0.02,
-                               num_leaves=2048, min_child_samples=50,
+    ("clf", lgbm.LGBMRegressor(n_estimators=3000, learning_rate=0.02,
+                               num_leaves=512, min_child_samples=10,
                                colsample_bytree=0.7, subsample=0.7,
                                n_jobs=n_jobs))
 ])
