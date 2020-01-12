@@ -27,7 +27,7 @@ target = "target_zscore"
 plt.ion(); matplotlib.use('TkAgg')
 
 # Specific parameters
-n_jobs = 4
+n_jobs = 14
 metric = "spear"
 
 # Load results from exploration
@@ -44,7 +44,7 @@ for key, val in d_pick.items():
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
 
-df_tune = df.sample(n = min(df.shape[0], int(1e5))).reset_index(drop = True)
+df_tune = df.sample(n = min(df.shape[0], int(1e6))).reset_index(drop = True)
 
 # Scale "metr_enocded" features for DL
 df_tune[metr_encoded + "_normed"] = ((df_tune[metr_encoded] - df_tune[metr_encoded].min()) /
@@ -73,8 +73,8 @@ i_test
 # --- Fits -----------------------------------------------------------------------------------------------------------
 
 # Lasso / Elastic Net
-fit = (GridSearchCV(SGDRegressor(penalty = "ElasticNet", warm_start = True),  # , tol=1e-2
-#fit = (GridSearchCV(ElasticNet(normalize=True, warm_start=True),  # , tol=1e-2
+#fit = (GridSearchCV(SGDRegressor(penalty = "ElasticNet", warm_start = True),  # , tol=1e-2
+fit = (GridSearchCV(ElasticNet(normalize=False, warm_start=True),  # , tol=1e-2
                     {"alpha": [2 ** x for x in range(-8, -24, -2)],
                      "l1_ratio": [1]},
                     cv = split_my1fold_cv.split(df_tune),
@@ -91,10 +91,10 @@ pd.DataFrame(fit.cv_results_)
 
 # XGBoost
 start = time.time()
-fit = (GridSearchCV_xlgb(xgb.XGBRegressor(verbosity = 0),
-                         {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
-                          "max_depth": [6, 9], "min_child_weight": [10],
-                          "colsample_bytree": [0.5], "subsample": [1]},
+fit = (GridSearchCV_xlgb(xgb.XGBRegressor(verbosity = 0, n_jobs = n_jobs),
+                         {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.02],
+                          "max_depth": [12,15,17], "min_child_weight": [10],
+                          "colsample_bytree": [0.7], "subsample": [0.7]},
                          cv = split_my1fold_cv.split(df_tune),
                          refit = False,
                          scoring = d_scoring[TARGET_TYPE],
@@ -112,11 +112,12 @@ plot_cvresult(fit.cv_results_, metric = metric,
 
 
 # LightGBM
+# metr_encoded = setdiff(metr_encoded,'building_id_ENCODED')
 start = time.time()
-fit = (GridSearchCV_xlgb(lgbm.LGBMRegressor(),
-                         {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
-                          "num_leaves": [8, 32, 64], "min_child_samples": [10],
-                          "colsample_bytree": [0.5], "subsample": [1]},
+fit = (GridSearchCV_xlgb(lgbm.LGBMRegressor(n_jobs = n_jobs),
+                         {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.02],
+                          "num_leaves": [64,128,512], "min_child_samples": [10],
+                          "colsample_bytree": [0.7], "subsample": [0.7]},
                          cv = split_my1fold_cv.split(df_tune),
                          refit = False,
                          scoring = d_scoring[TARGET_TYPE],
@@ -126,7 +127,9 @@ fit = (GridSearchCV_xlgb(lgbm.LGBMRegressor(),
             categorical_feature = [x for x in metr_encoded.tolist() if "_ENCODED" in x]))
 print(time.time()-start)
 plot_cvresult(fit.cv_results_, metric = metric,
-              x_var = "n_estimators", color_var = "num_leaves", column_var = "min_child_samples")
+              x_var = "n_estimators", color_var = "num_leaves",
+              column_var = "colsample_bytree", row_var = "subsample",
+              style_var = "min_child_samples")
 
 
 # DeepL
@@ -176,12 +179,12 @@ fit = (GridSearchCV(KerasRegressor(build_fn = keras_model,
                                    output_dim = 1,
                                    target_type = TARGET_TYPE,
                                    verbose = 0),
-                    {"size": ["100-50-20"],
+                    {"size": ["50","100-50-20"],
                      "lambdah": [None], "dropout": [None],
                      "batch_size": [100], "lr": [1e-3],
                      "batch_normalization": [True],
                      "activation": ["relu"],
-                     "epochs": [10, 15, 20]},
+                     "epochs": [20]},
                     cv = split_my1fold_cv.split(df_tune),
                     refit = False,
                     scoring = d_scoring[TARGET_TYPE],
@@ -189,8 +192,9 @@ fit = (GridSearchCV(KerasRegressor(build_fn = keras_model,
                     n_jobs = n_jobs)
        .fit(CreateSparseMatrix(metr = metr_encoded + "_normed", df_ref = df_tune).fit_transform(df_tune),
             df_tune[target]))
+
 plot_cvresult(fit.cv_results_, metric = metric, x_var = "epochs", color_var = "lr",
-              column_var = "lambdah", row_var = "dropout")
+              column_var = "size", row_var = "batch_size")
 
 
 # ######################################################################################################################

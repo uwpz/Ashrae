@@ -21,7 +21,7 @@ step_scale = d_pipelines["pipeline_etl"].named_steps["target_scale"]
 
 # Read scoring data
 df_test = pd.read_csv(dataloc + "test.csv", parse_dates=["timestamp"], dtype={'meter': object})
-#df_test = df_test.sample(n=int(1e5)).reset_index(drop = True)
+#df_test = df_test.sample(n=int(1e5)).reset_index(drop = True)   # !!! Attention: Sample
 with open("0_etl.pkl", "rb") as file:
     d_vars = pickle.load(file)
 df_weather = d_vars["df_weather"]
@@ -44,8 +44,9 @@ df[step_scale.target].hist(bins = 50)
 print((time.time()-start)/60)
 
 # Write
-(df[["row_id"]].assign(meter_reading=np.round(np.exp(df[step_scale.target].values) - 1, 4))
-               .to_csv(dataloc + "score.csv", index=False))
+df_score = df[["row_id"]].assign(meter_reading=np.round((np.exp(df[step_scale.target].values) - 1) * 0.9, 4))
+df_score["meter_reading"].describe()
+sum(df_score["meter_reading"] < 0)
+df_score["meter_reading"] = np.where(df_score["meter_reading"] < 0, 0, df_score["meter_reading"])
+df_score.to_csv(dataloc + "score.csv", index=False)
 
-
-df[step_scale.target].describe()

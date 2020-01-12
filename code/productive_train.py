@@ -43,11 +43,12 @@ df["target"] = np.log(df["meter_reading"] + 1)
 df["week"] = df["timestamp"].dt.week
 np.random.seed(999)
 tmp = np.random.permutation(df["week"].unique())
-weeks_util = tmp[:5]
-weeks_test = tmp[5:15]
-weeks_train = tmp[15:]
-df["fold"] = np.where(np.isin(df["week"].values, weeks_util), "util",
-                      np.where(np.isin(df["week"], weeks_test), "test", "train"))
+weeks_test = tmp[:10]
+weeks_train = tmp[10:]
+df["fold"] = np.where(np.isin(df["week"], weeks_test), "test", "train")
+np.random.seed(999)
+df["fold"].iloc[np.random.choice(np.arange(len(df)), int(0.1*len(df)))] = "util"
+#df["fold"] = np.random.permutation(pd.qcut(np.arange(len(df)), q=[0, 0.1, 0.8, 1], labels=["util", "train", "test"]))
 print(df.fold.value_counts())
 df["encode_flag"] = df["fold"].map({"train": 0, "test": 0, "util": 1})  # Used for encoding
 
@@ -60,13 +61,16 @@ df_meta_sub = d_vars["df_meta_sub"]
 # Get variable types
 metr = df_meta_sub.loc[(df_meta_sub["type"] == "metr") & (df_meta_sub["exclude"] != 1), "variable"].values
 cate = df_meta_sub.loc[(df_meta_sub["type"] == "cate") & (df_meta_sub["exclude"] != 1), "variable"].values
-
+# !!! Attention: all features
+#metr = df_meta_sub.loc[(df_meta_sub["type"] == "metr"), "variable"].values
+#cate = df_meta_sub.loc[(df_meta_sub["type"] == "cate"), "variable"].values
 
 # --- ETL -------------------------------------------------------------------------------------------------
 
 #df_save = df.copy()
 #df = df_save.copy()
-df = df.sample(n=int(10e3)).reset_index(drop = True)
+# !!! Attention: sample
+#df = df.sample(n=int(1e6)).reset_index(drop = True)
 
 # Remove "main gaps"
 df["dayofyear"] = df["timestamp"].dt.dayofyear
@@ -86,14 +90,15 @@ pipeline_etl = Pipeline([
     ("cate_map_nonexist", MapNonexisting(features=cate)),  # transform non-existing values: Collect information
     ("cate_enc", TargetEncoding(features=cate, encode_flag_column="encode_flag",
                                 target="target", remove_burned_data = False)),  # target-encoding
+    # !!! Attention: remove_burned_data
     ("cate_enc_zscore", TargetEncoding(features = cate, encode_flag_column = "encode_flag",
-                                target = "target_zscore", suffix = "_ENCODED_zscore", remove_burned_data = True)),
+                                target = "target_zscore", suffix = "_ENCODED_zscore", remove_burned_data = False)),
     ("cate_map_toomany", MapToomany(features=cate, n_top=30))  # reduce "toomany-members" categorical features
 ])
-df = pipeline_etl.fit_transform(df, df["target"].values, cate_map_nonexist__transform=False)
+df = pipeline_etl.fit_transform(df, cate_map_nonexist__transform=False)
 df["target"].hist(bins=50)
 df["target_zscore"].hist(bins=50)
-metr = np.append(metr, pipeline_etl.named_steps["cate_map_toomany"]._toomany + "_ENCODED")
+#metr = np.append(metr, pipeline_etl.named_steps["cate_map_toomany"]._toomany + "_ENCODED")
 metr_encoded = np.concatenate([metr, cate + "_ENCODED"])
 metr_encoded_zscore = np.concatenate([metr, cate + "_ENCODED_zscore"])
 
@@ -106,11 +111,18 @@ metr_encoded_zscore = np.concatenate([metr, cate + "_ENCODED_zscore"])
 #dill.load_session("tmp.pkl")
 from sklearn.model_selection import GridSearchCV, PredefinedSplit
 
-target = "target"
-encoded_cols = metr_encoded
-n_samp = 5e3
+n_samp = 10e6
 df_tune = df.sample(n=int(n_samp)).reset_index(drop = True)  # .query("site_id == '9'") df["site_id"].value_counts()
 split_index = PredefinedSplit(df_tune["fold"].map({"train": -1, "test": 0}).values)
+
+
+
+#target = "target"
+#encoded_cols = metr_encoded
+target = "target_zscore"
+encoded_cols = metr_encoded_zscore
+
+
 
 # start = time.time()
 # fit = (GridSearchCV_xlgb(xgb.XGBRegressor(verbosity = 0, n_jobs = n_jobs),
@@ -132,7 +144,7 @@ split_index = PredefinedSplit(df_tune["fold"].map({"train": -1, "test": 0}).valu
 start = time.time()
 fit = (GridSearchCV_xlgb(lgbm.LGBMRegressor(n_jobs = n_jobs),
                          {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.02],
-                          "num_leaves": [1024], "min_child_samples": [10],
+                          "num_leaves": [1024, 2024, 4048], "min_child_samples": [10, 50],
                           "colsample_bytree": [0.7], "subsample": [0.7]},
                          cv = split_index.split(df_tune),
                          refit = False,
@@ -150,8 +162,8 @@ plot_cvresult(fit.cv_results_, metric = "spear",
 
 pipeline_fit = Pipeline([
     ("filter_df", CreateFinalDf(metr = encoded_cols)),
-    ("clf", lgbm.LGBMRegressor(n_estimators=2000, learning_rate=0.02,
-                               num_leaves=1024, min_child_weight=10,
+    ("clf", lgbm.LGBMRegressor(n_estimators=1000, learning_rate=0.02,
+                               num_leaves=1024, min_child_samples=10,
                                colsample_bytree=0.7, subsample=0.7,
                                n_jobs=n_jobs))
 ])
@@ -162,13 +174,15 @@ fit = pipeline_fit.fit(df_mytrain, df_mytrain[target],
                        clf__categorical_feature = [x for x in encoded_cols.tolist() if "_ENCODED" in x])
 df_mytest["yhat"] = pipeline_fit.predict(df_mytest)
 print(spear(df_mytest["yhat"], df_mytest[target]))
+print(rmse(df_mytest["yhat"], df_mytest[target]))
 if target == "target_zscore":
     y_pred = df_mytest["mean_target"] + df_mytest["yhat"] * df_mytest["std_target"]
 else:
     y_pred = df_mytest["yhat"]
 y_true = df_mytest["target"]
 print(spear(y_true, y_pred))
-         
+print(rmse(y_true, y_pred))
+     
 '''
 
 
@@ -188,14 +202,14 @@ print(spear(y_true, y_pred))
 # fit = pipeline_fit.fit(df, df["target_zscore"])
 
 pipeline_fit = Pipeline([
-    ("filter_df", CreateFinalDf(metr = metr_encoded)),
+    ("filter_df", CreateFinalDf(metr = metr_encoded_zscore)),
     ("clf", lgbm.LGBMRegressor(n_estimators=2000, learning_rate=0.02,
-                               num_leaves=1024, min_child_weight=10,
+                               num_leaves=2048, min_child_samples=50,
                                colsample_bytree=0.7, subsample=0.7,
                                n_jobs=n_jobs))
 ])
 fit = pipeline_fit.fit(df, df["target_zscore"],
-                       clf__categorical_feature = [x for x in metr_encoded.tolist() if "_ENCODED" in x])
+                       clf__categorical_feature = [x for x in metr_encoded_zscore.tolist() if "_ENCODED" in x])
 #yhat = pipeline_fit.predict(df);  plt.hist(yhat, bins = 50)  # Test it
 
 

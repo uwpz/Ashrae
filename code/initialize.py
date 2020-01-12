@@ -1337,7 +1337,7 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
     def transform(self, df):
         df[self.features + self.suffix] = df[self.features].apply(lambda x: x.map(self._d_map[x.name])
                                                                  .fillna(np.median(list(self._d_map[x.name].values()))))
-        if self.remove_burned_data:
+        if (self.remove_burned_data and self.encode_flag_column in df.columns):
             return df.loc[df[self.encode_flag_column] != 1, :].reset_index(drop = True)
         else:
             return df
@@ -1546,44 +1546,54 @@ class Undersample(BaseEstimator, TransformerMixin):
         return df
 
 
-# Adapt final dataframe
-class CreateFinalDf(BaseEstimator, TransformerMixin):
-    def __init__(self, metr = None, cate = None, target = None):
+# Create sparse matrix
+class CreateSparseMatrix(BaseEstimator, TransformerMixin):
+    def __init__(self, metr = None, cate = None, df_ref = None, sparse = True):
         self.metr = metr
         self.cate = cate
-        self.target = target
+        self.df_ref = df_ref
+        self.sparse = sparse
+        self.d_categories = None
+        self.df_map = pd.DataFrame()
 
     def fit(self, df = None, *_):
+        if self.df_ref is None:
+            self.df_ref = df
+        if self.cate is not None and len(self.cate) > 0:
+            self.d_categories = {x: self.df_ref[x].unique() for x in self.cate}
+        if self.metr is not None and len(self.metr) > 0:
+            self.df_map = pd.concat([self.df_map,
+                                     pd.DataFrame({"variable": self.metr, "value": None})])
+        if self.cate is not None and len(self.cate) > 0:
+            self.df_map = pd.concat([self.df_map,
+                                     (pd.DataFrame.from_dict(self.d_categories, orient = 'index')
+                                      .T.melt().dropna().reset_index(drop = True))])
+        self.df_map = self.df_map.reset_index(drop=True).reset_index().rename(columns={"index": "position"})
         return self
 
     def transform(self, df = None, y = None):
-        columns = []
-        if self.metr is not None:
-            columns = np.append(columns, self.metr)
-        if self.cate is not None:
-            columns = np.append(columns, self.cate)
-        if self.target is not None:
-            columns = np.append(columns, self.target)
-        return df[columns]
+        if self.metr is not None and len(self.metr) > 0:
+            if self.sparse:
+                # m_metr = df[self.metr].to_sparse().to_coo()
+                m_metr = df[self.metr].astype(pd.SparseDtype("float", np.nan))
+            else:
+                m_metr = df[self.metr].to_numpy()
+        else:
+            m_metr = None
+        if self.cate is not None and len(self.cate) > 0:
+            enc = OneHotEncoder(categories = list(self.d_categories.values()), sparse = self.sparse)
 
-
-class FeatureEngineeringTitanic(BaseEstimator, TransformerMixin):
-    def __init__(self, derive_deck = True, derive_familysize = True, derive_fare_pp = True):
-        self.derive_deck = derive_deck
-        self.derive_familysize = derive_familysize
-        self.derive_fare_pp = derive_fare_pp
-
-    def fit(self, *_):
-        return self
-
-    def transform(self, df, *_):
-        if self.derive_deck:
-            df["deck"] = df["cabin"].str[:1]
-        if self.derive_familysize:
-            df["familysize"] = df["sibsp"].astype("int") + df["parch"].astype("int") + 1
-        if self.derive_fare_pp:
-            df["fare_pp"] = df.groupby("ticket")["fare"].transform("mean")
-        return df
+            m_cate = enc.fit_transform(df[self.cate], y)
+            # if len(self.cate) == 1:
+            #     m_cate = enc.fit_transform(df[self.cate].reshape(-1, 1), y)
+            # else:
+            #     m_cate = enc.fit_transform(df[self.cate], y)
+        else:
+            m_cate = None
+        if self.sparse:
+            return hstack([m_metr, m_cate], format = "csr")
+        else:
+            return np.hstack([m_metr, m_cate])
 
 
 # Incremental n_estimators GridSearch
@@ -1712,25 +1722,6 @@ class GridSearchCV_xlgb(GridSearchCV):
 
 # --- Productive -------------------------------------------------------------------------------------------------
 
-class FeatureEngineeringTitanic(BaseEstimator, TransformerMixin):
-    def __init__(self, derive_deck = True, derive_familysize = True, derive_fare_pp = True):
-        self.derive_deck = derive_deck
-        self.derive_familysize = derive_familysize
-        self.derive_fare_pp = derive_fare_pp
-
-    def fit(self, *_):
-        return self
-
-    def transform(self, df, *_):
-        if self.derive_deck:
-            df["deck"] = df["cabin"].str[:1]
-        if self.derive_familysize:
-            df["familysize"] = df["sibsp"].astype("int") + df["parch"].astype("int") + 1
-        if self.derive_fare_pp:
-            df["fare_pp"] = df.groupby("ticket")["fare"].transform("mean")
-        return df
-
-
 # Zscale target
 class ScaleTarget(BaseEstimator, TransformerMixin):
     def __init__(self, target, target_newname, group_cols, winsorize_quantiles = None):
@@ -1795,13 +1786,33 @@ class FeatureEngineeringAshrae(BaseEstimator, TransformerMixin):
 
     def transform(self, df):
         if self.derive_fe:
-            df = df.set_index("timestamp")
-            df["hour"] = df.index.hour.astype("str").str.zfill(2)
-            df["dayofweek"] = df.index.dayofweek.astype("str")
+            df["hour"] = df["timestamp"].dt.hour.astype("str").str.zfill(2)
+            df["dayofweek"] = df["timestamp"].dt.dayofweek.astype("str")
             df["weekend"] = np.where(df.dayofweek.isin(["5", "6"]), 1, 0).astype("str")
-            df["week"] = df.index.week
-            df["month"] = df.index.month.astype("str").str.zfill(2)
-            df = df.reset_index()
+            df["week"] = df["timestamp"].dt.week
+            df["month"] = df["timestamp"].dt.month.astype("str").str.zfill(2)
+            df["dayofyear"] = df["timestamp"].dt.dayofyear
             df['sq_floor'] = df['square_feet'] / df['floor_count'].astype("float")
         return df
+
+
+# Adapt final dataframe
+class CreateFinalDf(BaseEstimator, TransformerMixin):
+    def __init__(self, metr = None, cate = None, target = None):
+        self.metr = metr
+        self.cate = cate
+        self.target = target
+
+    def fit(self, df = None, *_):
+        return self
+
+    def transform(self, df = None, y = None):
+        columns = []
+        if self.metr is not None:
+            columns = np.append(columns, self.metr)
+        if self.cate is not None:
+            columns = np.append(columns, self.cate)
+        if self.target is not None:
+            columns = np.append(columns, self.target)
+        return df[columns]
 

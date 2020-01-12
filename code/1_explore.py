@@ -35,11 +35,11 @@ df, df_meta_sub = d_vars["df"], d_vars["df_meta_sub"]
 # Train/Test fold: usually split by time
 np.random.seed(999)
 tmp = np.random.permutation(df["week"].unique())
-weeks_util = tmp[:5]
-weeks_test = tmp[5:15]
-weeks_train = tmp[15:]
-df["fold"] = np.where(np.isin(df["week"].values, weeks_util), "util",
-                      np.where(np.isin(df["week"], weeks_test), "test", "train"))
+weeks_test = tmp[:10]
+weeks_train = tmp[10:]
+df["fold"] = np.where(np.isin(df["week"], weeks_test), "test", "train")
+np.random.seed(999)
+df["fold"].iloc[np.random.choice(np.arange(len(df)), 10)] = "util"
 #df["fold"] = np.random.permutation(pd.qcut(np.arange(len(df)), q=[0, 0.1, 0.8, 1], labels=["util", "train", "test"]))
 print(df.fold.value_counts())
 df["fold_num"] = df["fold"].map({"train": 0, "util": 0, "test": 1})  # Used for pedicting test data

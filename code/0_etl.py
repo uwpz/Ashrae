@@ -98,30 +98,27 @@ df_weather = (df_weather.set_index(['timestamp', 'site_id']).unstack('site_id')
                      how="left", on=['site_id', 'timestamp']))  # add (non-imputed) categorical columns
 
 # FE
-# TODO for air_temperature: lag1h, lag2h, avg12h, min12h, max12h
-'''
-sales_lag1d = df_train[ids + ["zsales_log", "onpromotion"]]\
-    .rename(columns={"zsales_log": "zsales_log_lag1d", "onpromotion": "onpromotion_lag1d"})\
-    .set_index(ids, append=True)
-sales_lag7d = df_train[ids + ["zsales_log", "onpromotion"]]\
-    .shift(shift, "D")\
-    .rename(columns={"zsales_log": "zsales_log_lag7d", "onpromotion": "onpromotion_lag7d"})\
-    .set_index(ids, append=True)
-sales_avg7d = df_train[ids + ["zsales_log", "onpromotion"]]\
-    .set_index(ids, append=True).unstack(ids)\
-    .rolling("6D").mean().stack(ids)\
-    .rename(columns={"zsales_log": "zsales_log_avg7d", "onpromotion": "onpromotion_avg7d"})
-sales_avg4sameweekdays = df_train.groupby("dayofweek").apply(
-    lambda x: x[ids + ["zsales_log", "onpromotion"]].set_index(ids, append=True).unstack(ids)
-              .shift(shift, "D").rolling("21D").mean().stack(ids)) \
-    .reset_index("dayofweek", drop=True) \
-    .rename(columns={"zsales_log": "zsales_log_avg4sameweekdays", "onpromotion": "onpromotion_avg4sameweekdays"})
-sales_avg12sameweekdays = df_train.groupby("dayofweek").apply(
-    lambda x: x[ids + ["zsales_log", "onpromotion"]].set_index(ids, append=True).unstack(ids)
-              .shift(shift, "D").rolling("77D").mean().stack(ids)) \
-    .reset_index("dayofweek", drop=True) \
-    .rename(columns={"zsales_log": "zsales_log_avg12sameweekdays", "onpromotion": "onpromotion_avg12sameweekdays"})
-'''
+df_weather = df_weather.set_index("timestamp")
+ids = ["site_id"]
+weather_lag1h = (df_weather[ids + ["air_temperature"]]
+                 .shift(1, "H")
+                 .rename(columns = {"air_temperature": "air_temperature_lag1h"})
+                 .set_index(ids, append = True))
+weather_lag2h = (df_weather[ids + ["air_temperature"]]
+                 .shift(2, "H")
+                 .rename(columns = {"air_temperature": "air_temperature_lag2h"})
+                 .set_index(ids, append = True))
+weather_agg12h = (df_weather[ids + ["air_temperature"]]
+                  .set_index(ids, append = True).unstack(ids)
+                  .rolling("12H").aggregate(dict(mean = "mean", max = "max", min = "min")).stack(ids)
+                  .droplevel(1, axis = 1)
+                  .rename(columns = {"mean": "air_temperature_avg12h", "min": "air_temperature_min12h",
+                                     "max": "air_temperature_max12h"}))
+df_weather = (df_weather.set_index(ids, append = True)
+              .join(weather_lag1h, how = "left")
+              .join(weather_lag2h, how = "left")
+              .join(weather_agg12h, how = "left")).reset_index()
+
 
 # --- Building -----------------------------------------------------------------------------------------------------
 
